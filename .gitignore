@@ -4,6 +4,7 @@ tmdb_5000_credits.csv
 
 # Avoid huge files
 similarity.pkl
+vectors.pkl
 
 # Python
 __pycache__/

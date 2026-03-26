@@ -116,14 +116,16 @@ def load_data():
         movies = pd.DataFrame(movies_df)
         index = faiss.read_index("movies_index.faiss")
         vectorizer = pickle.load(open('vectorizer.pkl', 'rb'))
-        vectors = pickle.load(open('vectors.pkl', 'rb'))
+        # Reconstruct vectors from tags_string to avoid storing a duplicate 91MB file
+        vectors = vectorizer.transform(movies['tags_string']).toarray().astype('float32')
+        faiss.normalize_L2(vectors)
         return movies, index, vectorizer, vectors
     except FileNotFoundError:
         return None, None, None, None
 
 def recommend(movie_title, movies, index, vectors):
     idx = movies[movies['title'] == movie_title].index[0]
-    query_vec = vectors[idx:idx+1]
+    query_vec = vectors[idx:idx+1].copy()
     distances, indices = index.search(query_vec, 31)
     
     movie_indices = indices[0][1:]
