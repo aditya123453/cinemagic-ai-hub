@@ -306,20 +306,23 @@ with st.sidebar:
     
     st.markdown("---")
     st.subheader("🤖 AI Movie Scout")
-    with st.form(key="chat_form", clear_on_submit=True):
-        user_msg = st.text_input("Ask me for a mood or genre:", placeholder="e.g. scary movie, something funny, sci-fi...")
-        chat_submitted = st.form_submit_button("Ask 🎬")
-    if chat_submitted and user_msg:
-        resp, genre_filter = get_bot_response(user_msg)
-        st.session_state.chat_history.append({"msg": user_msg, "resp": resp, "genre": genre_filter})
-    for item in st.session_state.chat_history[-3:]:
-        st.markdown(f'<div class="chat-bubble">🧑 {item["msg"]}</div>', unsafe_allow_html=True)
-        st.markdown(f'<div class="chat-bubble">🤖 {item["resp"]}</div>', unsafe_allow_html=True)
-        if item["genre"]:
-            if st.button(f"🔍 Show {item['genre']} movies", key=f"genre_{item['genre']}"):
-                st.session_state.active_mood_genres = [item['genre']]
-                st.session_state.active_mood_name = item['genre']
-                st.rerun()
+    user_msg = st.text_input("Ask me for a mood or genre:", placeholder="e.g. scary movie, something funny, sci-fi...", key="chat_input")
+    if st.button("Ask 🎬", key="chat_submit"):
+        if user_msg:
+            resp, genre_filter = get_bot_response(user_msg)
+            st.session_state.chat_history.append({"msg": user_msg, "resp": resp, "genre": genre_filter})
+            st.rerun()
+    
+    if st.session_state.chat_history:
+        for item in st.session_state.chat_history[-3:]:
+            st.markdown(f'<div class="chat-bubble">🧑 {item["msg"]}</div>', unsafe_allow_html=True)
+            st.markdown(f'<div class="chat-bubble">🤖 {item["resp"]}</div>', unsafe_allow_html=True)
+            if item["genre"]:
+                genre_display = item['genre'].replace(" ", "_").lower()
+                if st.button(f"🔍 Show {item['genre']} movies", key=f"genre_btn_{genre_display}_{len(st.session_state.chat_history)}"):
+                    st.session_state.active_mood_genres = [item['genre']]
+                    st.session_state.active_mood_name = item['genre']
+                    st.rerun()
     
     st.markdown("---")
     st.subheader("📊 Your Taste Profile")
@@ -424,10 +427,15 @@ if (magic_btn or selected_vibe_genres) and selected_movie:
                 p_path = details.get('poster_path')
                 p_url = f"https://image.tmdb.org/t/p/w500/{p_path}" if p_path else "https://via.placeholder.com/500x750"
                 st.image(p_url)
-                if st.button("❤️ Add to Watchlist", key="wl_main"):
-                    if selected_movie not in [m['title'] for m in st.session_state.watchlist]:
-                        st.session_state.watchlist.append({'title': selected_movie, 'poster': p_url})
-                        st.toast(f"Added {selected_movie} to watchlist!")
+                wl_cols = st.columns([1, 1])
+                with wl_cols[0]:
+                    if st.button("❤️ Add to WL", key="wl_main"):
+                        if selected_movie not in [m['title'] for m in st.session_state.watchlist]:
+                            st.session_state.watchlist.append({'title': selected_movie, 'poster': p_url})
+                            st.success(f"Added to watchlist!")
+                with wl_cols[1]:
+                    if st.button("📊 More Info", key="info_main"):
+                        st.info(f"⭐ {details.get('vote_average', 'N/A')} | ⏱️ {details.get('runtime', 'N/A')} min")
             with rc2:
                 st.markdown(f"## {selected_movie}")
                 st.markdown(f"**{details.get('vote_average', 'N/A')} ⭐** | {details.get('runtime', 'N/A')} min | {details.get('release_date', 'N/A')[:4]}")
@@ -442,15 +450,18 @@ if (magic_btn or selected_vibe_genres) and selected_movie:
         for i, (ridx, rrow) in enumerate(recs.iterrows()):
             with res_cols[i]:
                 rp = fetch_poster(rrow['movie_id'])
-                st.markdown(f'<div class="movie-card"><img src="{rp}" style="width:100%"><div style="padding:10px;"><div style="font-size:0.8rem; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{rrow["title"]}</div><div style="color:#e50914; font-size:0.8rem;">{rrow["vote_average"]} ⭐</div></div></div>', unsafe_allow_html=True)
-                if st.button(f"🎬 Recommend", key=f"rec_{ridx}"):
-                    st.session_state.surprise_movie = rrow['title']
-                    st.session_state.active_mood_genres = None
-                    st.rerun()
-                if st.button(f"❤️", key=f"wl_{ridx}"):
-                    if rrow['title'] not in [m['title'] for m in st.session_state.watchlist]:
-                        st.session_state.watchlist.append({'title': rrow['title'], 'poster': rp})
-                        st.toast(f"Added {rrow['title']}!")
+                st.markdown(f'<div class="movie-card"><img src="{rp}" style="width:100%; cursor:pointer;"><div style="padding:10px;"><div style="font-size:0.8rem; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{rrow["title"]}</div><div style="color:#e50914; font-size:0.8rem;">{rrow["vote_average"]} ⭐</div></div></div>', unsafe_allow_html=True)
+                col1, col2 = st.columns([1, 1])
+                with col1:
+                    if st.button(f"🎬", key=f"rec_{ridx}", help="Get recommendations"):
+                        st.session_state.surprise_movie = rrow['title']
+                        st.session_state.active_mood_genres = None
+                        st.rerun()
+                with col2:
+                    if st.button(f"❤️", key=f"wl_{ridx}", help="Add to watchlist"):
+                        if rrow['title'] not in [m['title'] for m in st.session_state.watchlist]:
+                            st.session_state.watchlist.append({'title': rrow['title'], 'poster': rp})
+                            st.success(f"Added {rrow['title']}!")
 
 else:
     st.markdown("---")
@@ -460,10 +471,17 @@ else:
     for i, (tidx, trow) in enumerate(trend_df.iterrows()):
         with t_cols[i % 6]:
             tp = fetch_poster(trow['movie_id'])
-            st.markdown(f'<div class="movie-card"><img src="{tp}" style="width:100%"><div style="padding:10px;"><div style="font-size:0.8rem; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{trow["title"]}</div><div style="color:#e50914; font-size:0.8rem;">{trow["vote_average"]} ⭐</div></div></div>', unsafe_allow_html=True)
-            if st.button(f"🎬 Recommend", key=f"trend_{tidx}"):
-                st.session_state.surprise_movie = trow['title']
-                st.rerun()
+            st.markdown(f'<div class="movie-card"><img src="{tp}" style="width:100%; cursor:pointer;"><div style="padding:10px;"><div style="font-size:0.8rem; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{trow["title"]}</div><div style="color:#e50914; font-size:0.8rem;">{trow["vote_average"]} ⭐</div></div></div>', unsafe_allow_html=True)
+            tcol1, tcol2 = st.columns([1, 1])
+            with tcol1:
+                if st.button(f"🎬", key=f"trend_{tidx}", help="Get recommendations"):
+                    st.session_state.surprise_movie = trow['title']
+                    st.rerun()
+            with tcol2:
+                if st.button(f"❤️", key=f"twl_{tidx}", help="Add to watchlist"):
+                    if trow['title'] not in [m['title'] for m in st.session_state.watchlist]:
+                        st.session_state.watchlist.append({'title': trow['title'], 'poster': tp})
+                        st.success(f"Added {trow['title']}!")
 
 st.markdown("---")
 st.markdown("<p style='text-align: center; color: #888;'>Premium AI Recommendation Engine | Built for Professional Portfolio</p>", unsafe_allow_html=True)
