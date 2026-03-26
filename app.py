@@ -1,181 +1,48 @@
-import streamlit as st
-import pickle
-import pandas as pd
-import requests
-import numpy as np
-import random
-from sklearn.neighbors import NearestNeighbors
+"""
+CINEMAGIC - AI-Powered Movie Recommendation Engine
+Modern, Production-Ready Streamlit Application
 
-# Set Page Config early
+Architecture:
+- config.py: Configuration management
+- models.py: Recommendation engine
+- utils.py: API service & utilities
+- app.py: Main UI application
+"""
+
+import streamlit as st
+import pandas as pd
+import logging
+from datetime import datetime
+from typing import Optional, Tuple
+
+from config import (
+    APP_TITLE, APP_ICON, RECOMMENDATIONS_COUNT, 
+    TRENDING_COUNT, CHAT_HISTORY_DISPLAY, ENABLE_TRAILER
+)
+from models import get_engine
+from utils import tmdb_service, format_movie_title, APIError
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# ============================================================================
+# PAGE CONFIGURATION
+# ============================================================================
+
 st.set_page_config(
-    page_title="Cinemagic | Hybrid AI Hub", 
-    layout="wide", 
-    page_icon="🎬",
+    page_title=APP_TITLE,
+    layout="wide",
+    page_icon=APP_ICON,
     initial_sidebar_state="expanded"
 )
 
-# --- Optimized API Tools (with Caching) ---
-@st.cache_data(ttl=86400) # Cache for 24 hours
-def fetch_poster(movie_id):
-    api_key = "8265bd1679663a7ea12ac168da84d2e8"
-    try:
-        url = f"https://api.themoviedb.org/3/movie/{movie_id}?api_key={api_key}&language=en-US"
-        data = requests.get(url, timeout=5).json()
-        poster_path = data.get('poster_path')
-        if poster_path:
-            return "https://image.tmdb.org/t/p/w500/" + poster_path
-        return "https://via.placeholder.com/500x750?text=Poster+Not+Found"
-    except:
-        return "https://via.placeholder.com/500x750?text=Poster+Not+Found"
+# ============================================================================
+# PREMIUM AESTHETICS & CSS
+# ============================================================================
 
-@st.cache_data(ttl=86400)
-def fetch_backdrop(movie_id):
-    api_key = "8265bd1679663a7ea12ac168da84d2e8"
-    try:
-        url = f"https://api.themoviedb.org/3/movie/{movie_id}?api_key={api_key}"
-        data = requests.get(url, timeout=5).json()
-        path = data.get('backdrop_path')
-        if path:
-            return f"https://image.tmdb.org/t/p/original/{path}"
-        return None
-    except:
-        return None
-
-def set_backdrop(url):
-    if url:
-        st.markdown(f"""
-        <style>
-        .stApp {{
-            background: linear-gradient(rgba(10, 16, 23, 0.8), rgba(10, 16, 23, 0.95)), 
-                        url("{url}");
-            background-size: cover;
-            background-attachment: fixed;
-            background-position: center;
-        }}
-        </style>
-        """, unsafe_allow_html=True)
-    else:
-        st.markdown("""
-        <style>
-        .stApp {
-            background-color: #060d17;
-        }
-        </style>
-        """, unsafe_allow_html=True)
-
-@st.cache_data(ttl=86400)
-def get_movie_trailer(movie_id):
-    api_key = "8265bd1679663a7ea12ac168da84d2e8"
-    try:
-        url = f"https://api.themoviedb.org/3/movie/{movie_id}/videos?api_key={api_key}&language=en-US"
-        data = requests.get(url, timeout=5).json()
-        for video in data.get('results', []):
-            if video['type'] == 'Trailer' and video['site'] == 'YouTube':
-                return f"https://www.youtube.com/watch?v={video['key']}"
-        return None
-    except:
-        return None
-
-@st.cache_data(ttl=3600)
-def get_movie_details(movie_id):
-    api_key = "8265bd1679663a7ea12ac168da84d2e8"
-    try:
-        url = f"https://api.themoviedb.org/3/movie/{movie_id}?api_key={api_key}&language=en-US"
-        return requests.get(url, timeout=5).json()
-    except:
-        return None
-
-def get_external_movie_tags(query):
-    api_key = "8265bd1679663a7ea12ac168da84d2e8"
-    try:
-        search_url = f"https://api.themoviedb.org/3/search/movie?api_key={api_key}&query={query}"
-        res = requests.get(search_url).json()
-        if not res['results']: 
-            return None, None
-        
-        movie = res['results'][0]
-        movie_id = movie['id']
-        
-        details_url = f"https://api.themoviedb.org/3/movie/{movie_id}?api_key={api_key}&append_to_response=credits"
-        details = requests.get(details_url).json()
-        
-        genres = [g['name'].replace(" ", "").lower() for g in details.get('genres', [])]
-        cast = [c['name'].replace(" ", "").lower() for c in details.get('credits', {}).get('cast', [])[:3]]
-        crew = [c['name'].replace(" ", "").lower() for c in details.get('credits', {}).get('crew', []) if c['job'] == 'Director'][:1]
-        
-        tags = details.get('overview', '').lower().split() + genres + cast + crew
-        return " ".join(tags), details
-    except:
-        return None, None
-
-# --- Optimized Loading Tools ---
-@st.cache_resource
-def load_data():
-    try:
-        movies_df = pickle.load(open('movies_list.pkl', 'rb'))
-        movies = pd.DataFrame(movies_df)
-        vectorizer = pickle.load(open('vectorizer.pkl', 'rb'))
-        # Build vector matrix from tags and fit a NearestNeighbors model (no FAISS needed)
-        vectors = vectorizer.transform(movies['tags_string'])
-        nn_model = NearestNeighbors(n_neighbors=31, metric='cosine', algorithm='brute')
-        nn_model.fit(vectors)
-        return movies, nn_model, vectorizer, vectors
-    except Exception as e:
-        st.error(f"Load error: {e}")
-        return None, None, None, None
-
-def recommend(movie_title, movies, nn_model, vectors):
-    idx = movies[movies['title'] == movie_title].index[0]
-    query_vec = vectors[idx]
-    distances, indices = nn_model.kneighbors(query_vec, n_neighbors=31)
-    movie_indices = indices[0][1:]  # skip self
-    recommend_pool = movies.iloc[movie_indices].copy()
-    recommend_pool = recommend_pool.sort_values('weighted_score', ascending=False)
-    return recommend_pool.head(6)
-
-def recommend_external(tags_string, movies, nn_model, vectorizer):
-    new_vec = vectorizer.transform([tags_string])
-    distances, indices = nn_model.kneighbors(new_vec, n_neighbors=30)
-    movie_indices = indices[0]
-    recommend_pool = movies.iloc[movie_indices].copy()
-    recommend_pool = recommend_pool.sort_values('weighted_score', ascending=False)
-    return recommend_pool.head(6)
-
-# --- Recommendation Logic Extensions ---
-MOODS = {
-    "😊 Happy": ["Comedy", "Animation", "Family"],
-    "😢 Sad": ["Drama", "Romance"],
-    "🔥 Action": ["Action", "Adventure", "Thriller"],
-    "🧠 Mind-Blowing": ["Sci-Fi", "Mystery", "Fantasy"],
-    "💖 Romantic": ["Romance", "Comedy"]
-}
-
-def get_bot_response(user_input):
-    user_input = user_input.lower()
-    if any(word in user_input for word in ["happy", "laugh", "comedy", "fun", "funny", "cheer", "light"]):
-        return "😄 Great choice! Here are some feel-good picks for you!", "Comedy"
-    elif any(word in user_input for word in ["scary", "horror", "creep", "ghost", "dark", "thriller", "afraid", "fear"]):
-        return "👻 Feeling brave? Try some spine-chillers!", "Horror"
-    elif any(word in user_input for word in ["future", "space", "sci-fi", "scifi", "science", "robot", "alien", "mind", "galaxy", "technology"]):
-        return "🚀 Prepare to have your mind warped!", "Sci-Fi"
-    elif any(word in user_input for word in ["love", "romance", "romantic", "date", "heart", "relationship", "couple"]):
-        return "❤️ Love is in the air! Here's some romance for you.", "Romance"
-    elif any(word in user_input for word in ["action", "fight", "war", "battle", "explode", "adventure", "hero", "superhero"]):
-        return "💥 Let's get the adrenaline pumping!", "Action"
-    elif any(word in user_input for word in ["animated", "cartoon", "pixar", "disney", "family", "kids", "children"]):
-        return "🎨 Fun for everyone! Here are some animated gems.", "Animation"
-    elif any(word in user_input for word in ["sad", "cry", "emotional", "drama", "moving", "touch", "feel"]):
-        return "🎭 Sometimes a good cry is what we need.", "Drama"
-    elif any(word in user_input for word in ["mystery", "detective", "crime", "whodunit", "clue", "suspense"]):
-        return "🔍 Let's solve a mystery together!", "Mystery"
-    elif any(word in user_input for word in ["bored", "nothing", "anything", "random", "suggest", "recommend", "what"]):
-        return "🎲 Let me surprise you with something great!", "Action"
-    return "🤖 I'm your AI Movie Scout! Try: 'scary movie', 'something funny', 'romantic film', 'sci-fi', 'action', etc.", None
-
-# --- Premium Aesthetics (CSS) ---
 st.markdown("""
 <style>
-    /* Typography */
     @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;800&family=Outfit:wght@300;400;600&display=swap');
     
     html, body, [class*="css"] {
@@ -204,12 +71,10 @@ st.markdown("""
         text-transform: uppercase;
     }
 
-    /* Fix labels visibility */
     label, .stMarkdown, p, span {
         color: #ffffff !important;
     }
 
-    /* Card Styling */
     .movie-card {
         background: rgba(22, 28, 36, 0.7);
         backdrop-filter: blur(10px);
@@ -227,7 +92,6 @@ st.markdown("""
         box-shadow: 0 15px 30px rgba(0,0,0,0.8);
     }
     
-    /* Taste Profile Section */
     .taste-label {
         font-size: 0.8rem;
         color: #aaa;
@@ -235,6 +99,7 @@ st.markdown("""
         justify-content: space-between;
         margin-bottom: 5px;
     }
+    
     .taste-bar-bg {
         background: #1a212a;
         height: 6px;
@@ -242,12 +107,12 @@ st.markdown("""
         overflow: hidden;
         margin-bottom: 12px;
     }
+    
     .taste-bar-fill {
         background: #e50914;
         height: 100%;
     }
 
-    /* Mood Buttons */
     .stButton>button {
         width: 100%;
         border-radius: 6px;
@@ -265,7 +130,6 @@ st.markdown("""
         color: white !important;
     }
 
-    /* Chatbot Bubble */
     .chat-bubble {
         background: #1a212a;
         padding: 15px;
@@ -273,91 +137,223 @@ st.markdown("""
         border: 1px solid #303741;
         margin-bottom: 10px;
     }
+    
+    .error-box {
+        background: rgba(220, 53, 69, 0.1);
+        border: 1px solid #dc3545;
+        border-radius: 6px;
+        padding: 15px;
+        color: #ff6b6b;
+    }
+    
+    .success-box {
+        background: rgba(40, 167, 69, 0.1);
+        border: 1px solid #28a745;
+        border-radius: 6px;
+        padding: 15px;
+        color: #51cf66;
+    }
 </style>
 """, unsafe_allow_html=True)
 
-# --- Session State Initialization ---
-if 'watchlist' not in st.session_state: st.session_state.watchlist = []
-if 'taste_history' not in st.session_state: st.session_state.taste_history = []
-if 'chat_history' not in st.session_state: st.session_state.chat_history = []
-if 'current_backdrop' not in st.session_state: st.session_state.current_backdrop = None
-if 'active_mood_genres' not in st.session_state: st.session_state.active_mood_genres = None
-if 'active_mood_name' not in st.session_state: st.session_state.active_mood_name = None
+# ============================================================================
+# SESSION STATE INITIALIZATION
+# ============================================================================
 
-def update_taste_profile(genres_list):
+if 'watchlist' not in st.session_state:
+    st.session_state.watchlist = []
+if 'taste_history' not in st.session_state:
+    st.session_state.taste_history = []
+if 'chat_history' not in st.session_state:
+    st.session_state.chat_history = []
+if 'current_backdrop' not in st.session_state:
+    st.session_state.current_backdrop = None
+if 'active_mood_genres' not in st.session_state:
+    st.session_state.active_mood_genres = None
+if 'active_mood_name' not in st.session_state:
+    st.session_state.active_mood_name = None
+
+# ============================================================================
+# UTILITY FUNCTIONS
+# ============================================================================
+
+MOOD_TEMPLATES = {
+    "😊 Happy": ["Comedy", "Animation", "Family"],
+    "😢 Sad": ["Drama", "Romance"],
+    "🔥 Action": ["Action", "Adventure", "Thriller"],
+    "🧠 Mind-Blowing": ["Sci-Fi", "Mystery", "Fantasy"],
+    "💖 Romantic": ["Romance", "Comedy"]
+}
+
+
+def get_bot_response(user_input: str) -> Tuple[str, Optional[str]]:
+    """AI chatbot response based on user mood/genre input"""
+    user_input = user_input.lower()
+    
+    responses = {
+        ("happy", "laugh", "comedy", "fun", "funny", "cheer", "light"): 
+            ("😄 Great choice! Here are some feel-good picks for you!", "Comedy"),
+        ("scary", "horror", "creep", "ghost", "dark", "thriller", "afraid", "fear"):
+            ("👻 Feeling brave? Try some spine-chillers!", "Horror"),
+        ("future", "space", "sci-fi", "scifi", "science", "robot", "alien", "mind", "galaxy", "technology"):
+            ("🚀 Prepare to have your mind warped!", "Sci-Fi"),
+        ("love", "romance", "romantic", "date", "heart", "relationship", "couple"):
+            ("❤️ Love is in the air! Here's some romance for you.", "Romance"),
+        ("action", "fight", "war", "battle", "explode", "adventure", "hero", "superhero"):
+            ("💥 Let's get the adrenaline pumping!", "Action"),
+        ("animated", "cartoon", "pixar", "disney", "family", "kids", "children"):
+            ("🎨 Fun for everyone! Here are some animated gems.", "Animation"),
+        ("sad", "cry", "emotional", "drama", "moving", "touch", "feel"):
+            ("🎭 Sometimes a good cry is what we need.", "Drama"),
+        ("mystery", "detective", "crime", "whodunit", "clue", "suspense"):
+            ("🔍 Let's solve a mystery together!", "Mystery"),
+    }
+    
+    for keywords, (response, genre) in responses.items():
+        if any(word in user_input for word in keywords):
+            return response, genre
+    
+    return "🤖 Try: 'scary movie', 'something funny', 'romantic film', 'sci-fi', 'action', etc.", None
+
+
+def update_taste_profile(genres_list: list):
+    """Update user taste profile with viewed genres"""
     if genres_list and isinstance(genres_list, list):
         st.session_state.taste_history.extend(genres_list)
 
-# --- Main App Logic ---
-movies, nn_model, vectorizer, vectors = load_data()
 
-if movies is None:
-    st.error("🚨 **Model files not found!**")
-    st.info("Please run `python recommender.py` to generate the engine.")
+def set_backdrop(url: Optional[str]):
+    """Set page backdrop image"""
+    if url:
+        st.markdown(f"""
+        <style>
+        .stApp {{
+            background: linear-gradient(rgba(10, 16, 23, 0.8), rgba(10, 16, 23, 0.95)), 
+                        url("{url}");
+            background-size: cover;
+            background-attachment: fixed;
+            background-position: center;
+        }}
+        </style>
+        """, unsafe_allow_html=True)
+    else:
+        st.markdown("""
+        <style>
+        .stApp {
+            background-color: #060d17;
+        }
+        </style>
+        """, unsafe_allow_html=True)
+
+
+# ============================================================================
+# MAIN APPLICATION
+# ============================================================================
+
+try:
+    engine = get_engine()
+except Exception as e:
+    st.error(f"🚨 **Failed to load recommendation engine**\n{str(e)}")
+    st.info("Please run `python recommender.py` to generate model files.")
     st.stop()
 
 # Dynamic Backdrop
 set_backdrop(st.session_state.current_backdrop)
 
-# Sidebar - AI & Profile
+# ============================================================================
+# SIDEBAR - AI SCOUT & PROFILE
+# ============================================================================
+
 with st.sidebar:
     st.markdown('<h1 style="color:#e50914; font-family:Montserrat; font-weight:800; font-size:2rem; margin-bottom:0;">CINEMAGIC</h1>', unsafe_allow_html=True)
-    st.caption("AI-Powered Discovery Engine")
+    st.caption("🎬 AI-Powered Discovery Engine")
     
     st.markdown("---")
     st.subheader("🤖 AI Movie Scout")
-    user_msg = st.text_input("Ask me for a mood or genre:", placeholder="e.g. scary movie, something funny, sci-fi...", key="chat_input")
+    
+    user_msg = st.text_input(
+        "Ask me for a mood or genre:",
+        placeholder="e.g. scary movie, something funny, sci-fi...",
+        key="chat_input"
+    )
+    
     if st.button("Ask 🎬", key="chat_submit"):
-        if user_msg:
+        if user_msg.strip():
             resp, genre_filter = get_bot_response(user_msg)
-            st.session_state.chat_history.append({"msg": user_msg, "resp": resp, "genre": genre_filter})
+            st.session_state.chat_history.append({
+                "msg": user_msg,
+                "resp": resp,
+                "genre": genre_filter,
+                "timestamp": datetime.now()
+            })
             st.rerun()
     
     if st.session_state.chat_history:
-        for item in st.session_state.chat_history[-3:]:
+        st.markdown("**Recent Conversations:**")
+        for i, item in enumerate(st.session_state.chat_history[-CHAT_HISTORY_DISPLAY:]):
             st.markdown(f'<div class="chat-bubble">🧑 {item["msg"]}</div>', unsafe_allow_html=True)
             st.markdown(f'<div class="chat-bubble">🤖 {item["resp"]}</div>', unsafe_allow_html=True)
             if item["genre"]:
                 genre_display = item['genre'].replace(" ", "_").lower()
-                if st.button(f"🔍 Show {item['genre']} movies", key=f"genre_btn_{genre_display}_{len(st.session_state.chat_history)}"):
+                if st.button(f"🔍 Show {item['genre']}", key=f"genre_{genre_display}_{i}"):
                     st.session_state.active_mood_genres = [item['genre']]
                     st.session_state.active_mood_name = item['genre']
                     st.rerun()
     
     st.markdown("---")
     st.subheader("📊 Your Taste Profile")
+    
     if not st.session_state.taste_history:
-        st.caption("Start browsing to build your profile!")
+        st.caption("👉 Start exploring to build your profile!")
     else:
-        counts = pd.Series(st.session_state.taste_history).value_counts().head(5)
-        total = counts.sum()
-        for genre, count in counts.items():
+        genre_counts = pd.Series(st.session_state.taste_history).value_counts().head(5)
+        total = genre_counts.sum()
+        for genre, count in genre_counts.items():
             perc = int((count / total) * 100)
             st.markdown(f'<div class="taste-label"><span>{genre}</span><span>{perc}%</span></div>', unsafe_allow_html=True)
             st.markdown(f'<div class="taste-bar-bg"><div class="taste-bar-fill" style="width:{perc}%"></div></div>', unsafe_allow_html=True)
-
+    
     st.markdown("---")
+    
     if st.session_state.watchlist:
         st.subheader("📌 Watchlist")
-        for m in st.session_state.watchlist[:3]:
-            st.caption(f"✅ {m['title']}")
-    if st.button("🗑️ Reset Profile"):
-        st.session_state.watchlist = []
-        st.session_state.taste_history = []
-        st.session_state.current_backdrop = None
-        st.session_state.active_mood_genres = None
-        st.session_state.chat_history = []
-        st.rerun()
+        for m in st.session_state.watchlist[:5]:
+            col1, col2 = st.columns([4, 1])
+            with col1:
+                st.caption(f"✅ {format_movie_title(m['title'], 20)}")
+            with col2:
+                if st.button("✕", key=f"remove_{m['title']}"):
+                    st.session_state.watchlist.remove(m)
+                    st.rerun()
+    
+    st.markdown("---")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("🔄 Reset All"):
+            st.session_state.watchlist = []
+            st.session_state.taste_history = []
+            st.session_state.current_backdrop = None
+            st.session_state.active_mood_genres = None
+            st.session_state.chat_history = []
+            st.rerun()
+    
+    with col2:
+        if st.button("ℹ️ About"):
+            st.info("**CINEMAGIC** - Hybrid ML recommender combining content-based filtering with popularity metrics. Built with ❤️ for movie lovers.")
 
-# Header
+# ============================================================================
+# MAIN CONTENT AREA
+# ============================================================================
+
 st.markdown('<h1 class="premium-title">CINEMAGIC</h1>', unsafe_allow_html=True)
-st.markdown('<p class="premium-subtitle">Expert AI Recommendations • Modern Discovery • Cinematic UI</p>', unsafe_allow_html=True)
+st.markdown('<p class="premium-subtitle">Expert AI Recommendations • Smart Discovery • Cinematic UI</p>', unsafe_allow_html=True)
 
-# 1. Mood Selection Grid
+# Mood Selection Grid
 st.markdown("### 🎭 Choose Your Vibe")
-m_cols = st.columns(len(MOODS))
-for i, (mood, genres) in enumerate(MOODS.items()):
-    with m_cols[i]:
+mood_cols = st.columns(len(MOOD_TEMPLATES))
+for i, (mood, genres) in enumerate(MOOD_TEMPLATES.items()):
+    with mood_cols[i]:
         is_active = st.session_state.active_mood_genres == genres
         label = f"✅ {mood}" if is_active else mood
         if st.button(label, key=f"mood_{i}"):
@@ -368,120 +364,228 @@ for i, (mood, genres) in enumerate(MOODS.items()):
                 st.session_state.active_mood_genres = genres
                 st.session_state.active_mood_name = mood
             st.rerun()
+
 selected_vibe_genres = st.session_state.active_mood_genres
 
-# 2. Hero Search Bar
+# Hero Search Bar
 st.markdown("---")
-c_input, c_btn = st.columns([3, 1])
-with c_input:
-    mode = st.radio("Search Mode:", ["Database Search", "Global Search (TMDB)"], horizontal=True)
+search_col1, search_col2 = st.columns([3, 1])
+
+with search_col1:
+    mode = st.radio(
+        "Search Mode:",
+        ["Database Search", "Global Search (TMDB)"],
+        horizontal=True
+    )
+    
     if mode == "Database Search":
         if selected_vibe_genres:
-            st.success("Mood filter active!")
-            matches = movies[movies['genres'].apply(lambda x: any(g in x for g in selected_vibe_genres))]
-            selected_movie = st.selectbox('Pick a recommendation:', matches['title'].values, key="vibe_sel")
+            st.success(f"🎯 Mood filter active: {st.session_state.active_mood_name}")
+            matches = engine.filter_by_genres(selected_vibe_genres)
+            if not matches.empty:
+                selected_movie = st.selectbox(
+                    'Pick a movie from your mood:',
+                    matches['title'].values,
+                    key="vibe_sel"
+                )
+            else:
+                st.warning("No movies found for this mood. Try another!")
+                selected_movie = None
         else:
             default_val = 0
             if 'surprise_movie' in st.session_state:
-                try: default_val = list(movies['title'].values).index(st.session_state.surprise_movie); del st.session_state.surprise_movie
-                except: pass
-            selected_movie = st.selectbox('Start with a movie you like:', movies['title'].values, index=default_val)
+                try:
+                    default_val = list(engine.movies_df['title'].values).index(st.session_state.surprise_movie)
+                    del st.session_state.surprise_movie
+                except:
+                    pass
+            selected_movie = st.selectbox(
+                'Start with a movie you like:',
+                engine.movies_df['title'].values,
+                index=default_val
+            )
     else:
-        selected_movie = st.text_input("Enter any movie name globally:", placeholder="e.g. Interstellar")
+        selected_movie = st.text_input(
+            "Enter any movie name globally:",
+            placeholder="e.g. Interstellar, Inception..."
+        )
 
-with c_btn:
-    st.write("") # Spacer
-    st.write("") # Spacer
-    st.write("") # Spacer
-    magic_btn = st.button('🚀 Magic Recommend')
-    if st.button('🎲 Surprise Me!'):
-        st.session_state.surprise_movie = movies['title'].sample(1).iloc[0]
+with search_col2:
+    st.write("") 
+    st.write("") 
+    if st.button('🚀 Recommend', help="Get recommendations"):
+        st.session_state.magic_btn = True
+    if st.button('🎲 Surprise', help="Random movie"):
+        st.session_state.surprise_movie = engine.movies_df['title'].sample(1).iloc[0]
         st.rerun()
 
-# 3. Results Engine
-if (magic_btn or selected_vibe_genres) and selected_movie:
-    with st.spinner('✨ Consulting the AI oracle...'):
-        if mode == "Database Search":
-            recs = recommend(selected_movie, movies, nn_model, vectors)
-            searched_id = movies[movies['title'] == selected_movie]['movie_id'].iloc[0]
-            details = get_movie_details(searched_id)
-            row = movies[movies['title'] == selected_movie].iloc[0]
-            update_taste_profile(row['genres'])
-        else:
-            tags, details = get_external_movie_tags(selected_movie)
-            if tags:
-                recs = recommend_external(tags, movies, nn_model, vectorizer)
-                selected_movie = details['title']
-                update_taste_profile([g['name'] for g in details.get('genres', [])])
-            else:
-                st.error("Global movie search failed. Try a different spelling.")
-                st.stop()
-        
-        if details:
-            st.session_state.current_backdrop = fetch_backdrop(details['id'])
-            set_backdrop(st.session_state.current_backdrop)
-
-        if details:
-            rc1, rc2 = st.columns([1, 4])
-            with rc1:
-                p_path = details.get('poster_path')
-                p_url = f"https://image.tmdb.org/t/p/w500/{p_path}" if p_path else "https://via.placeholder.com/500x750"
-                st.image(p_url)
-                wl_cols = st.columns([1, 1])
-                with wl_cols[0]:
-                    if st.button("❤️ Add to WL", key="wl_main"):
-                        if selected_movie not in [m['title'] for m in st.session_state.watchlist]:
-                            st.session_state.watchlist.append({'title': selected_movie, 'poster': p_url})
-                            st.success(f"Added to watchlist!")
-                with wl_cols[1]:
-                    if st.button("📊 More Info", key="info_main"):
-                        st.info(f"⭐ {details.get('vote_average', 'N/A')} | ⏱️ {details.get('runtime', 'N/A')} min")
-            with rc2:
-                st.markdown(f"## {selected_movie}")
-                st.markdown(f"**{details.get('vote_average', 'N/A')} ⭐** | {details.get('runtime', 'N/A')} min | {details.get('release_date', 'N/A')[:4]}")
-                st.write(details.get('overview', 'No summary available.'))
-                tr = get_movie_trailer(details['id'])
-                if tr:
-                    with st.expander("📺 Watch Official Trailer"): st.video(tr)
-
-        st.markdown("---")
-        st.subheader(f"Because you liked **{selected_movie}**...")
-        res_cols = st.columns(6)
-        for i, (ridx, rrow) in enumerate(recs.iterrows()):
-            with res_cols[i]:
-                rp = fetch_poster(rrow['movie_id'])
-                st.markdown(f'<div class="movie-card"><img src="{rp}" style="width:100%; cursor:pointer;"><div style="padding:10px;"><div style="font-size:0.8rem; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{rrow["title"]}</div><div style="color:#e50914; font-size:0.8rem;">{rrow["vote_average"]} ⭐</div></div></div>', unsafe_allow_html=True)
-                col1, col2 = st.columns([1, 1])
-                with col1:
-                    if st.button(f"🎬", key=f"rec_{ridx}", help="Get recommendations"):
-                        st.session_state.surprise_movie = rrow['title']
-                        st.session_state.active_mood_genres = None
-                        st.rerun()
-                with col2:
-                    if st.button(f"❤️", key=f"wl_{ridx}", help="Add to watchlist"):
-                        if rrow['title'] not in [m['title'] for m in st.session_state.watchlist]:
-                            st.session_state.watchlist.append({'title': rrow['title'], 'poster': rp})
-                            st.success(f"Added {rrow['title']}!")
+# Results Engine
+if (hasattr(st.session_state, 'magic_btn') and st.session_state.magic_btn) or selected_vibe_genres:
+    if selected_movie:
+        with st.spinner('✨ Consulting the AI oracle...'):
+            try:
+                if mode == "Database Search":
+                    recs, source_features = engine.recommend(selected_movie, RECOMMENDATIONS_COUNT)
+                    movie_data = engine.get_movie_by_title(selected_movie)
+                    if movie_data and 'genres' in movie_data:
+                        update_taste_profile(movie_data['genres'])
+                else:
+                    tags, details = tmdb_service.get_external_movie_tags(selected_movie)
+                    if tags and details:
+                        recs = engine.recommend_from_tags(tags, RECOMMENDATIONS_COUNT)
+                        source_features = {
+                            'title': details.get('title'),
+                            'genres': [g['name'] for g in details.get('genres', [])],
+                            'rating': details.get('vote_average', 0),
+                            'overview': details.get('overview', '')[:200] + '...'
+                        }
+                        if source_features['genres']:
+                            update_taste_profile(source_features['genres'])
+                        selected_movie = source_features['title']
+                    else:
+                        st.error("❌ Movie not found globally. Try a different spelling.")
+                        st.stop()
+                
+                # Fetch backdrop for dynamic theming
+                if mode == "Database Search":
+                    movie_id = engine.get_movie_by_title(selected_movie)
+                    if movie_id and 'movie_id' in movie_id:
+                        st.session_state.current_backdrop = tmdb_service.fetch_backdrop(movie_id['movie_id'])
+                else:
+                    if details and 'id' in details:
+                        st.session_state.current_backdrop = tmdb_service.fetch_backdrop(details['id'])
+                
+                set_backdrop(st.session_state.current_backdrop)
+                
+                # Display source movie details
+                if details or source_features:
+                    st.markdown("---")
+                    rc1, rc2 = st.columns([1, 4])
+                    
+                    with rc1:
+                        if mode == "Database Search" and movie_data and 'movie_id' in movie_data:
+                            poster_url = tmdb_service.fetch_poster(movie_data['movie_id'])
+                        elif mode == "Global Search (TMDB)" and details:
+                            poster_url = tmdb_service.fetch_poster(details['id'])
+                        else:
+                            poster_url = "https://via.placeholder.com/500x750"
+                        
+                        st.image(poster_url)
+                        
+                        wl_cols = st.columns([1, 1])
+                        with wl_cols[0]:
+                            if st.button("❤️ Add to WL", key="wl_main"):
+                                if selected_movie not in [m['title'] for m in st.session_state.watchlist]:
+                                    st.session_state.watchlist.append({'title': selected_movie, 'poster': poster_url})
+                                    st.success("✅ Added to watchlist!")
+                        with wl_cols[1]:
+                            if st.button("📊 Why?", key="explain_main"):
+                                with st.expander("Why this movie?", expanded=True):
+                                    if source_features:
+                                        st.write(f"**Genres:** {', '.join(source_features.get('genres', []))}")
+                                        st.write(f"**Rating:** ⭐ {source_features.get('rating', 'N/A')}")
+                                        st.write(f"**Summary:** {source_features.get('overview', 'N/A')}")
+                    
+                    with rc2:
+                        st.title(selected_movie)
+                        if details:
+                            st.markdown(f"**{details.get('vote_average', 'N/A')} ⭐** | {details.get('runtime', 'N/A')} min | {details.get('release_date', 'N/A')[:4]}")
+                            st.write(details.get('overview', 'No summary available.'))
+                            
+                            if ENABLE_TRAILER:
+                                trailer_url = tmdb_service.get_movie_trailer(details['id'])
+                                if trailer_url:
+                                    with st.expander("📺 Watch Official Trailer"):
+                                        st.video(trailer_url)
+                
+                # Recommendations Grid
+                st.markdown("---")
+                st.subheader(f"🎬 Because you liked **{format_movie_title(selected_movie, 25)}**...")
+                
+                res_cols = st.columns(6)
+                for i in range(min(RECOMMENDATIONS_COUNT, len(recs))):
+                    with res_cols[i]:
+                        rrow = recs.iloc[i]
+                        rp = tmdb_service.fetch_poster(rrow['movie_id'])
+                        
+                        st.markdown(f'''
+                        <div class="movie-card">
+                            <img src="{rp}" style="width:100%; cursor:pointer;">
+                            <div style="padding:10px;">
+                                <div style="font-size:0.8rem; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{format_movie_title(rrow["title"], 20)}</div>
+                                <div style="color:#e50914; font-size:0.8rem;">{rrow.get("vote_average", "N/A")} ⭐</div>
+                            </div>
+                        </div>
+                        ''', unsafe_allow_html=True)
+                        
+                        tcol1, tcol2 = st.columns([1, 1])
+                        with tcol1:
+                            if st.button(f"🎬", key=f"rec_{i}", help="Get recommendations"):
+                                st.session_state.surprise_movie = rrow['title']
+                                st.session_state.active_mood_genres = None
+                                st.rerun()
+                        with tcol2:
+                            if st.button(f"❤️", key=f"wl_{i}", help="Add to watchlist"):
+                                if rrow['title'] not in [m['title'] for m in st.session_state.watchlist]:
+                                    st.session_state.watchlist.append({'title': rrow['title'], 'poster': rp})
+                                    st.success(f"✅ Added!")
+                
+                if hasattr(st.session_state, 'magic_btn'):
+                    st.session_state.magic_btn = False
+                    
+            except ValueError as e:
+                st.error(f"❌ {str(e)}")
+            except APIError as e:
+                st.error(f"❌ API Error: {str(e)}")
+            except Exception as e:
+                logger.error(f"Application error: {str(e)}")
+                st.error(f"❌ An unexpected error occurred: {str(e)}")
 
 else:
+    # Trending Content Display
     st.markdown("---")
     st.subheader("🔥 Trending Content")
-    trend_df = movies.sort_values('popularity', ascending=False).head(12)
-    t_cols = st.columns(6)
-    for i, (tidx, trow) in enumerate(trend_df.iterrows()):
-        with t_cols[i % 6]:
-            tp = fetch_poster(trow['movie_id'])
-            st.markdown(f'<div class="movie-card"><img src="{tp}" style="width:100%; cursor:pointer;"><div style="padding:10px;"><div style="font-size:0.8rem; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{trow["title"]}</div><div style="color:#e50914; font-size:0.8rem;">{trow["vote_average"]} ⭐</div></div></div>', unsafe_allow_html=True)
-            tcol1, tcol2 = st.columns([1, 1])
-            with tcol1:
-                if st.button(f"🎬", key=f"trend_{tidx}", help="Get recommendations"):
-                    st.session_state.surprise_movie = trow['title']
-                    st.rerun()
-            with tcol2:
-                if st.button(f"❤️", key=f"twl_{tidx}", help="Add to watchlist"):
-                    if trow['title'] not in [m['title'] for m in st.session_state.watchlist]:
-                        st.session_state.watchlist.append({'title': trow['title'], 'poster': tp})
-                        st.success(f"Added {trow['title']}!")
+    
+    try:
+        trend_df = engine.get_trending(TRENDING_COUNT)
+        t_cols = st.columns(6)
+        
+        for i, (_, trow) in enumerate(trend_df.iterrows()):
+            with t_cols[i % 6]:
+                tp = tmdb_service.fetch_poster(trow['movie_id'])
+                st.markdown(f'''
+                <div class="movie-card">
+                    <img src="{tp}" style="width:100%; cursor:pointer;">
+                    <div style="padding:10px;">
+                        <div style="font-size:0.8rem; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">{format_movie_title(trow["title"], 20)}</div>
+                        <div style="color:#e50914; font-size:0.8rem;">{trow.get("vote_average", "N/A")} ⭐</div>
+                    </div>
+                </div>
+                ''', unsafe_allow_html=True)
+                
+                tcol1, tcol2 = st.columns([1, 1])
+                with tcol1:
+                    if st.button(f"🎬", key=f"trend_{i}", help="Get recommendations"):
+                        st.session_state.surprise_movie = trow['title']
+                        st.rerun()
+                with tcol2:
+                    if st.button(f"❤️", key=f"twl_{i}", help="Add to watchlist"):
+                        if trow['title'] not in [m['title'] for m in st.session_state.watchlist]:
+                            st.session_state.watchlist.append({'title': trow['title'], 'poster': tp})
+                            st.success(f"✅ Added!")
+    except Exception as e:
+        logger.error(f"Trending error: {str(e)}")
+        st.error("Failed to load trending content")
 
+# Footer
 st.markdown("---")
-st.markdown("<p style='text-align: center; color: #888;'>Premium AI Recommendation Engine | Built for Professional Portfolio</p>", unsafe_allow_html=True)
+stats = engine.get_stats()
+st.markdown(f"""
+<div style='text-align: center; color: #888; font-size: 0.85rem;'>
+    <p>🎬 Premium ML Recommendation Engine | 
+    📊 {stats.get('total_movies', 'N/A')} movies | 
+    ⭐ Avg Rating: {stats.get('avg_rating', 'N/A'):.1f}</p>
+    <p>Built with Python • Streamlit • Scikit-learn • TMDB API</p>
+    <p><strong>Production Ready | CV-Worthy | Enterprise Grade</strong></p>
+</div>
+""", unsafe_allow_html=True)
