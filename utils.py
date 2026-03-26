@@ -67,7 +67,6 @@ class TMDBService:
             logger.error(f"Unexpected error: {str(e)}")
             raise APIError(f"An unexpected error occurred: {str(e)}")
     
-    @st.cache_data(ttl=86400)
     def fetch_poster(self, movie_id: int) -> str:
         """Fetch movie poster URL"""
         try:
@@ -79,7 +78,6 @@ class TMDBService:
         except APIError:
             return "https://via.placeholder.com/500x750?text=Poster+Not+Found"
     
-    @st.cache_data(ttl=86400)
     def fetch_backdrop(self, movie_id: int) -> Optional[str]:
         """Fetch movie backdrop URL"""
         try:
@@ -91,7 +89,6 @@ class TMDBService:
         except APIError:
             return None
     
-    @st.cache_data(ttl=86400)
     def get_movie_details(self, movie_id: int) -> Optional[Dict]:
         """Get detailed movie information"""
         try:

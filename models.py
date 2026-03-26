@@ -181,15 +181,15 @@ class RecommendationEngine:
     def get_stats(self) -> dict:
         """Get recommendation engine statistics"""
         try:
+            avg_rating = float(self.movies_df['vote_average'].mean())
             return {
                 'total_movies': len(self.movies_df),
-                'avg_rating': self.movies_df['vote_average'].mean(),
-                'genres_count': len(set(self._flatten_list(self.movies_df['genres']))),
-                'date_range': f"{self.movies_df['release_date'].min()} to {self.movies_df['release_date'].max()}"
+                'avg_rating': round(avg_rating, 1),
+                'genres_count': len(set(self._flatten_list(self.movies_df['genres'])))
             }
         except Exception as e:
             logger.error(f"Error getting stats: {e}")
-            return {}
+            return {'total_movies': 'N/A', 'avg_rating': 0, 'genres_count': 'N/A'}
     
     @staticmethod
     def _flatten_list(list_of_lists):

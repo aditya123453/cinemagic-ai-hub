@@ -580,11 +580,17 @@ else:
 # Footer
 st.markdown("---")
 stats = engine.get_stats()
+avg_rating = stats.get('avg_rating', 0)
+if isinstance(avg_rating, (int, float)):
+    rating_text = f"{avg_rating}"
+else:
+    rating_text = "N/A"
+
 st.markdown(f"""
 <div style='text-align: center; color: #888; font-size: 0.85rem;'>
     <p>🎬 Premium ML Recommendation Engine | 
     📊 {stats.get('total_movies', 'N/A')} movies | 
-    ⭐ Avg Rating: {stats.get('avg_rating', 'N/A'):.1f}</p>
+    ⭐ Avg Rating: {rating_text}</p>
     <p>Built with Python • Streamlit • Scikit-learn • TMDB API</p>
     <p><strong>Production Ready | CV-Worthy | Enterprise Grade</strong></p>
 </div>
