@@ -5,6 +5,7 @@ tmdb_5000_credits.csv
 # Avoid huge files
 similarity.pkl
 vectors.pkl
+movies_index.faiss
 
 # Python
 __pycache__/

@@ -2,9 +2,9 @@ import streamlit as st
 import pickle
 import pandas as pd
 import requests
-import faiss
 import numpy as np
 import random
+from sklearn.neighbors import NearestNeighbors
 
 # Set Page Config early
 st.set_page_config(
@@ -114,30 +114,28 @@ def load_data():
     try:
         movies_df = pickle.load(open('movies_list.pkl', 'rb'))
         movies = pd.DataFrame(movies_df)
-        index = faiss.read_index("movies_index.faiss")
         vectorizer = pickle.load(open('vectorizer.pkl', 'rb'))
-        # Reconstruct vectors from tags_string to avoid storing a duplicate 91MB file
-        vectors = vectorizer.transform(movies['tags_string']).toarray().astype('float32')
-        faiss.normalize_L2(vectors)
-        return movies, index, vectorizer, vectors
-    except FileNotFoundError:
+        # Build vector matrix from tags and fit a NearestNeighbors model (no FAISS needed)
+        vectors = vectorizer.transform(movies['tags_string'])
+        nn_model = NearestNeighbors(n_neighbors=31, metric='cosine', algorithm='brute')
+        nn_model.fit(vectors)
+        return movies, nn_model, vectorizer, vectors
+    except Exception as e:
+        st.error(f"Load error: {e}")
         return None, None, None, None
 
-def recommend(movie_title, movies, index, vectors):
+def recommend(movie_title, movies, nn_model, vectors):
     idx = movies[movies['title'] == movie_title].index[0]
-    query_vec = vectors[idx:idx+1].copy()
-    distances, indices = index.search(query_vec, 31)
-    
-    movie_indices = indices[0][1:]
+    query_vec = vectors[idx]
+    distances, indices = nn_model.kneighbors(query_vec, n_neighbors=31)
+    movie_indices = indices[0][1:]  # skip self
     recommend_pool = movies.iloc[movie_indices].copy()
     recommend_pool = recommend_pool.sort_values('weighted_score', ascending=False)
     return recommend_pool.head(6)
 
-def recommend_external(tags_string, movies, index, vectorizer):
-    new_vec = vectorizer.transform([tags_string]).toarray().astype('float32')
-    faiss.normalize_L2(new_vec)
-    distances, indices = index.search(new_vec, 30)
-    
+def recommend_external(tags_string, movies, nn_model, vectorizer):
+    new_vec = vectorizer.transform([tags_string])
+    distances, indices = nn_model.kneighbors(new_vec, n_neighbors=30)
     movie_indices = indices[0]
     recommend_pool = movies.iloc[movie_indices].copy()
     recommend_pool = recommend_pool.sort_values('weighted_score', ascending=False)
@@ -279,7 +277,7 @@ def update_taste_profile(genres_list):
         st.session_state.taste_history.extend(genres_list)
 
 # --- Main App Logic ---
-movies, index, vectorizer, vectors = load_data()
+movies, nn_model, vectorizer, vectors = load_data()
 
 if movies is None:
     st.error("🚨 **Model files not found!**")
@@ -372,7 +370,7 @@ with c_btn:
 if (magic_btn or selected_vibe_genres) and selected_movie:
     with st.spinner('✨ Consulting the AI oracle...'):
         if mode == "Database Search":
-            recs = recommend(selected_movie, movies, index, vectors)
+            recs = recommend(selected_movie, movies, nn_model, vectors)
             searched_id = movies[movies['title'] == selected_movie]['movie_id'].iloc[0]
             details = get_movie_details(searched_id)
             row = movies[movies['title'] == selected_movie].iloc[0]
@@ -380,7 +378,7 @@ if (magic_btn or selected_vibe_genres) and selected_movie:
         else:
             tags, details = get_external_movie_tags(selected_movie)
             if tags:
-                recs = recommend_external(tags, movies, index, vectorizer)
+                recs = recommend_external(tags, movies, nn_model, vectorizer)
                 selected_movie = details['title']
                 update_taste_profile([g['name'] for g in details.get('genres', [])])
             else:
